@@ -68,8 +68,7 @@ if ARGV[0] == "config"
     puts "graph_title elasticsearch docs per node"
     puts "graph_vlabel Documents"
   when "ops"
-    puts "graph_title elasticsearch operations per node"
-    puts "graph_vlabel Count/s"
+    # Multigraph mode handled below; per-operation graphs will define their own titles and labels
   when "store"
     puts "graph_title elasticsearch store size per node"
     puts "graph_vlabel Bytes"
@@ -80,26 +79,39 @@ if ARGV[0] == "config"
   # Dynamicky vytvoří labely podle dostupných nodů
   begin
     stats = fetch('/_nodes/' + CGI.escape(@node) + '/stats')
-    stats['nodes'].each do |node_id, node_stats|
-      node_name = node_stats['name'] || node_id
-      safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
-      case mode
-      when "jvm"
-        puts "#{safe}_used.label #{node_name} used"
-        puts "#{safe}_committed.label #{node_name} committed"
-      when "gc"
-        puts "#{safe}_count.label #{node_name}"
-      when "gc_time"
-        puts "#{safe}_time.label #{node_name}"
-      when "cache"
-        puts "#{safe}_field.label #{node_name} field"
-        puts "#{safe}_filter.label #{node_name} query"
-      when "docs"
-        puts "#{safe}_count.label #{node_name}"
-      when "ops"
-        %w[index get search delete].each { |m| puts "#{safe}_#{m}.label #{node_name} #{m}" }
-      when "store"
-        puts "#{safe}_size.label #{node_name}"
+
+    if mode == "ops"
+      %w[index get search delete].each do |op|
+        puts "multigraph elasticsearch_ops_#{op}"
+        puts "graph_title elasticsearch #{op} operations per node"
+        puts "graph_vlabel Count/s"
+        puts "graph_category elasticsearch"
+        stats['nodes'].each do |node_id, node_stats|
+          node_name = node_stats['name'] || node_id
+          safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
+          puts "#{safe}.label #{node_name}"
+        end
+      end
+    else
+      stats['nodes'].each do |node_id, node_stats|
+        node_name = node_stats['name'] || node_id
+        safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
+        case mode
+        when "jvm"
+          puts "#{safe}_used.label #{node_name} used"
+          puts "#{safe}_committed.label #{node_name} committed"
+        when "gc"
+          puts "#{safe}_count.label #{node_name}"
+        when "gc_time"
+          puts "#{safe}_time.label #{node_name}"
+        when "cache"
+          puts "#{safe}_field.label #{node_name} field"
+          puts "#{safe}_filter.label #{node_name} query"
+        when "docs"
+          puts "#{safe}_count.label #{node_name}"
+        when "store"
+          puts "#{safe}_size.label #{node_name}"
+        end
       end
     end
   rescue => e
@@ -116,47 +128,59 @@ rescue => e
   exit 1
 end
 
-stats['nodes'].each do |node_id, node_stats|
-  node_name = node_stats['name'] || node_id
-  safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
+if mode == "ops"
+  # Multigraph output: one graph per operation
+  %w[index get search delete].each do |op|
+    puts "multigraph elasticsearch_ops_#{op}"
+    stats['nodes'].each do |node_id, node_stats|
+      node_name = node_stats['name'] || node_id
+      safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
+      case op
+      when 'index'
+        value = node_stats.dig('indices', 'indexing', 'index_total') || 0
+      when 'get'
+        value = node_stats.dig('indices', 'get', 'total') || 0
+      when 'search'
+        value = node_stats.dig('indices', 'search', 'query_total') || 0
+      when 'delete'
+        value = node_stats.dig('indices', 'indexing', 'delete_total') || 0
+      end
+      puts "#{safe}.value #{value}"
+    end
+  end
+else
+  stats['nodes'].each do |node_id, node_stats|
+    node_name = node_stats['name'] || node_id
+    safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
 
-  case mode
-  when "jvm"
-    used = node_stats['jvm']['mem']['heap_used_in_bytes'] || 0
-    committed = node_stats['jvm']['mem']['heap_committed_in_bytes'] || 0
-    puts "#{safe}_used.value #{used}"
-    puts "#{safe}_committed.value #{committed}"
+    case mode
+    when "jvm"
+      used = node_stats['jvm']['mem']['heap_used_in_bytes'] || 0
+      committed = node_stats['jvm']['mem']['heap_committed_in_bytes'] || 0
+      puts "#{safe}_used.value #{used}"
+      puts "#{safe}_committed.value #{committed}"
 
-  when "gc"
-    count = node_stats['jvm']['gc']['collectors'].values.map { |c| c['collection_count'] || 0 }.sum
-    puts "#{safe}_count.value #{count}"
+    when "gc"
+      count = node_stats['jvm']['gc']['collectors'].values.map { |c| c['collection_count'] || 0 }.sum
+      puts "#{safe}_count.value #{count}"
 
-  when "gc_time"
-    time = node_stats['jvm']['gc']['collectors'].values.map { |c| c['collection_time_in_millis'] || 0 }.sum
-    puts "#{safe}_time.value #{time}"
+    when "gc_time"
+      time = node_stats['jvm']['gc']['collectors'].values.map { |c| c['collection_time_in_millis'] || 0 }.sum
+      puts "#{safe}_time.value #{time}"
 
-  when "cache"
-    field = node_stats['indices']['fielddata']['memory_size_in_bytes'] || 0
-    filter = node_stats['indices']['query_cache']['memory_size_in_bytes'] || 0
-    puts "#{safe}_field.value #{field}"
-    puts "#{safe}_filter.value #{filter}"
+    when "cache"
+      field = node_stats['indices']['fielddata']['memory_size_in_bytes'] || 0
+      filter = node_stats['indices']['query_cache']['memory_size_in_bytes'] || 0
+      puts "#{safe}_field.value #{field}"
+      puts "#{safe}_filter.value #{filter}"
 
-  when "docs"
-    count = node_stats['indices']['docs']['count'] || 0
-    puts "#{safe}_count.value #{count}"
+    when "docs"
+      count = node_stats['indices']['docs']['count'] || 0
+      puts "#{safe}_count.value #{count}"
 
-  when "ops"
-    index  = node_stats['indices']['indexing']['index_total'] || 0
-    get    = node_stats['indices']['get']['total'] || 0
-    search = node_stats['indices']['search']['query_total'] || 0
-    delete = node_stats['indices']['indexing']['delete_total'] || 0
-    puts "#{safe}_index.value #{index}"
-    puts "#{safe}_get.value #{get}"
-    puts "#{safe}_search.value #{search}"
-    puts "#{safe}_delete.value #{delete}"
-
-  when "store"
-    size = node_stats['indices']['store']['size_in_bytes'] || 0
-    puts "#{safe}_size.value #{size}"
+    when "store"
+      size = node_stats['indices']['store']['size_in_bytes'] || 0
+      puts "#{safe}_size.value #{size}"
+    end
   end
 end
