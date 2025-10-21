@@ -1,0 +1,162 @@
+#!/usr/bin/env ruby
+require 'rubygems'
+require 'net/http'
+require 'json'
+require 'cgi'
+
+#%# family=auto
+#%# capabilities=autoconf suggest
+
+@host = ENV['host'] || "localhost"
+@node = ENV['node'] || "_local"
+@port = (ENV['port'] || 9200).to_i
+@user = ENV['user'] || ""
+@pass = ENV['pass'] || ""
+@scheme = ENV['scheme'] || "http"
+@verify_ssl = ENV['verify_ssl'] != 'false'
+
+def fetch(resource)
+  uri = URI("#{@scheme}://#{@host}:#{@port}#{resource}")
+  req = Net::HTTP::Get.new(uri)
+  req.basic_auth(@user, @pass) unless @user.empty?
+  http = Net::HTTP.new(uri.hostname, uri.port)
+  if @scheme == "https"
+    http.use_ssl = true
+    http.verify_mode = OpenSSL::SSL::VERIFY_NONE unless @verify_ssl
+  end
+  JSON.parse(http.request(req).body)
+end
+
+err = IO.new(2, "w")
+mode = File.basename($0).split('_', 2)[1] || ""
+
+# --- AUTOCONF / SUGGEST -------------------------------------------------------
+if ARGV[0] == "autoconf"
+  begin
+    CGI.escape(@node)
+    fetch('/_nodes/' + @node)
+    puts "yes"; exit 0
+  rescue
+    puts "no"; exit 0
+  end
+end
+
+if ARGV[0] == "suggest"
+  puts %w[jvm gc gc_time cache docs ops store]
+  exit 0
+end
+
+# --- CONFIG -------------------------------------------------------------------
+if ARGV[0] == "config"
+  puts "graph_category elasticsearch"
+  puts "graph_args --base 1024 -l 0"
+
+  case mode
+  when "jvm"
+    puts "graph_title elasticsearch JVM heap per node"
+    puts "graph_vlabel Bytes"
+  when "gc"
+    puts "graph_title elasticsearch GC collections per node"
+    puts "graph_vlabel Collections/s"
+  when "gc_time"
+    puts "graph_title elasticsearch GC time per node"
+    puts "graph_vlabel Time (ms)"
+  when "cache"
+    puts "graph_title elasticsearch cache per node"
+    puts "graph_vlabel Bytes"
+  when "docs"
+    puts "graph_title elasticsearch docs per node"
+    puts "graph_vlabel Documents"
+  when "ops"
+    puts "graph_title elasticsearch operations per node"
+    puts "graph_vlabel Count/s"
+  when "store"
+    puts "graph_title elasticsearch store size per node"
+    puts "graph_vlabel Bytes"
+  else
+    puts "graph_title elasticsearch unknown mode"
+  end
+
+  # Dynamicky vytvoří labely podle dostupných nodů
+  begin
+    stats = fetch('/_nodes/' + CGI.escape(@node) + '/stats')
+    stats['nodes'].each do |node_id, node_stats|
+      node_name = node_stats['name'] || node_id
+      safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
+      case mode
+      when "jvm"
+        puts "#{safe}_used.label #{node_name} used"
+        puts "#{safe}_committed.label #{node_name} committed"
+      when "gc"
+        puts "#{safe}_count.label #{node_name}"
+      when "gc_time"
+        puts "#{safe}_time.label #{node_name}"
+      when "cache"
+        puts "#{safe}_field.label #{node_name} field"
+        puts "#{safe}_filter.label #{node_name} query"
+      when "docs"
+        puts "#{safe}_count.label #{node_name}"
+      when "ops"
+        %w[index get search delete].each { |m| puts "#{safe}_#{m}.label #{node_name} #{m}" }
+      when "store"
+        puts "#{safe}_size.label #{node_name}"
+      end
+    end
+  rescue => e
+    err.puts "Config fetch error: #{e}"
+  end
+  exit 0
+end
+
+# --- FETCH --------------------------------------------------------------------
+begin
+  stats = fetch('/_nodes/' + CGI.escape(@node) + '/stats')
+rescue => e
+  err.puts "Fetch error: #{e}"
+  exit 1
+end
+
+stats['nodes'].each do |node_id, node_stats|
+  node_name = node_stats['name'] || node_id
+  safe = node_name.gsub(/[^a-zA-Z0-9_]/, '_')
+
+  case mode
+  when "jvm"
+    used = node_stats['jvm']['mem']['heap_used_in_bytes'] || 0
+    committed = node_stats['jvm']['mem']['heap_committed_in_bytes'] || 0
+    puts "#{safe}_used.value #{used}"
+    puts "#{safe}_committed.value #{committed}"
+
+  when "gc"
+    count = node_stats['jvm']['gc']['collectors'].values.map { |c| c['collection_count'] || 0 }.sum
+    puts "#{safe}_count.value #{count}"
+
+  when "gc_time"
+    time = node_stats['jvm']['gc']['collectors'].values.map { |c| c['collection_time_in_millis'] || 0 }.sum
+    puts "#{safe}_time.value #{time}"
+
+  when "cache"
+    field = node_stats['indices']['fielddata']['memory_size_in_bytes'] || 0
+    filter = node_stats['indices']['query_cache']['memory_size_in_bytes'] || 0
+    puts "#{safe}_field.value #{field}"
+    puts "#{safe}_filter.value #{filter}"
+
+  when "docs"
+    count = node_stats['indices']['docs']['count'] || 0
+    puts "#{safe}_count.value #{count}"
+
+  when "ops"
+    index  = node_stats['indices']['indexing']['index_total'] || 0
+    get    = node_stats['indices']['get']['total'] || 0
+    search = node_stats['indices']['search']['query_total'] || 0
+    delete = node_stats['indices']['indexing']['delete_total'] || 0
+    puts "#{safe}_index.value #{index}"
+    puts "#{safe}_get.value #{get}"
+    puts "#{safe}_search.value #{search}"
+    puts "#{safe}_delete.value #{delete}"
+
+  when "store"
+    size = node_stats['indices']['store']['size_in_bytes'] || 0
+    puts "#{safe}_size.value #{size}"
+  end
+end
