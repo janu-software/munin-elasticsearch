@@ -9,16 +9,16 @@ An Elasticsearch Munin Plugin for monitoring Elasticsearch nodes. Written in Rub
 
 ### Installation
 1. Ensure you have Ruby and the JSON gem installed:
-2. ```bash
+   ```bash
    gem install json
    ```
-3. Download the plugin script and place it in your Munin plugins directory (e.g., `/etc/munin/plugins/`):
-4. ```bash
+2. Download the plugin script and place it in your Munin plugins directory (e.g., `/etc/munin/plugins/`):
+   ```bash
    wget https://raw.githubusercontent.com/janu-software/munin-elasticsearch/refs/heads/master/elasticsearch_ -O /etc/munin/plugins/elasticsearch_
    chmod +x /etc/munin/plugins/elasticsearch_
    ```
-5. Create symlinks for each Elasticsearch node you want to monitor:
-6. ```bash
+3. Create symlinks for each Elasticsearch node you want to monitor:
+   ```bash
    ln -s /etc/munin/plugins/elasticsearch_ /etc/munin/plugins/elasticsearch_jvm
    ln -s /etc/munin/plugins/elasticsearch_ /etc/munin/plugins/elasticsearch_docs
    ln -s /etc/munin/plugins/elasticsearch_ /etc/munin/plugins/elasticsearch_ops
@@ -27,8 +27,8 @@ An Elasticsearch Munin Plugin for monitoring Elasticsearch nodes. Written in Rub
    ln -s /etc/munin/plugins/elasticsearch_ /etc/munin/plugins/elasticsearch_gc
    ln -s /etc/munin/plugins/elasticsearch_ /etc/munin/plugins/elasticsearch_gc_time
    ```
-7. Restart the Munin node to apply changes:
-8. ```bash
+4. Restart the Munin node to apply changes:
+   ```bash
     service munin-node restart
     ```
 ### Configuration
